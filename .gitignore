@@ -36,7 +36,6 @@ artifacts/playwright/
 playwright-report/
 test-results/
 .playwright-mcp/
-tests/__snapshots__/
 tests/fixtures/
 
 # Misc temp/cache

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SmoothScrub Demo</title>
+    <style>
+      :root {
+        font-family:
+          Inter,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        color: #111827;
+        background: #f3f4f6;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+      }
+
+      p {
+        margin: 0 0 16px;
+        color: #374151;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .card {
+        border: 1px solid #d1d5db;
+        border-radius: 12px;
+        background: #fff;
+        padding: 16px;
+      }
+
+      .card h2 {
+        margin: 0 0 12px;
+        font-size: 1rem;
+      }
+
+      .row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: minmax(260px, 1fr) minmax(300px, 1fr);
+      }
+
+      .ascii {
+        margin: 0;
+        padding: 12px;
+        border-radius: 8px;
+        background: #111827;
+        color: #e5e7eb;
+        overflow-x: auto;
+        font:
+          13px/1.35 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+
+      .svg-wrap {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px;
+        overflow: auto;
+      }
+
+      .error {
+        color: #b91c1c;
+        font-weight: 600;
+      }
+
+      @media (max-width: 900px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SmoothScrub Fixture Demo</h1>
+    <p>This view loads <code>fixtures/ascii-art.txt</code> on each refresh.</p>
+    <div id="app" class="grid"></div>
+
+    <script type="module">
+      import { SmoothScrub } from '/dist/index.mjs';
+
+      const app = document.getElementById('app');
+
+      const parseFixtureSections = (raw) => {
+        const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        const sections = [];
+        let currentName = null;
+        let currentLines = [];
+
+        const trimOuterBlankLines = (inputLines) => {
+          let start = 0;
+          let end = inputLines.length;
+          while (start < end && inputLines[start].trim() === '') start += 1;
+          while (end > start && inputLines[end - 1].trim() === '') end -= 1;
+          return inputLines.slice(start, end);
+        };
+
+        const commit = () => {
+          if (!currentName) return;
+          const asciiLines = trimOuterBlankLines(currentLines);
+          if (!asciiLines.length) return;
+          sections.push({ name: currentName, ascii: asciiLines.join('\n') });
+        };
+
+        for (const line of lines) {
+          const header = line.match(/^===\s*(.+?)\s*===\s*$/);
+          if (header) {
+            commit();
+            currentName = header[1];
+            currentLines = [];
+            continue;
+          }
+          if (currentName) {
+            currentLines.push(line);
+          }
+        }
+
+        commit();
+        return sections;
+      };
+
+      const render = async () => {
+        const scrubber = new SmoothScrub();
+
+        try {
+          const response = await fetch(`/fixtures/ascii-art.txt?t=${Date.now()}`);
+          if (!response.ok) {
+            throw new Error(`Failed to load fixtures: ${response.status}`);
+          }
+
+          const raw = await response.text();
+          const sections = parseFixtureSections(raw);
+          app.innerHTML = '';
+
+          sections.forEach((section) => {
+            const card = document.createElement('section');
+            card.className = 'card';
+
+            const title = document.createElement('h2');
+            title.textContent = section.name;
+            card.appendChild(title);
+
+            const row = document.createElement('div');
+            row.className = 'row';
+
+            const source = document.createElement('pre');
+            source.className = 'ascii';
+            source.textContent = section.ascii;
+
+            const svgWrap = document.createElement('div');
+            svgWrap.className = 'svg-wrap';
+            const svg = scrubber.render(scrubber.autoFormat(section.ascii));
+            svgWrap.appendChild(svg);
+
+            row.append(source, svgWrap);
+            card.appendChild(row);
+            app.appendChild(card);
+          });
+        } catch (error) {
+          app.innerHTML = `<div class="error">${error instanceof Error ? error.message : 'Unknown error'}</div>`;
+        }
+      };
+
+      render();
+    </script>
+  </body>
+</html>

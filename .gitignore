@@ -36,9 +36,8 @@ artifacts/playwright/
 playwright-report/
 test-results/
 .playwright-mcp/
-
-# Project memory / session cache
-.github/project-memory/
+tests/__snapshots__/
+tests/fixtures/
 
 # Misc temp/cache
 .cache/
@@ -47,3 +46,4 @@ tmp/
 tmp-*.js
 .eslintcache
 *.tsbuildinfo
+.github/project-memory/

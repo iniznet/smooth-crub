@@ -95,6 +95,7 @@ The library automatically detects which mode to use based on the presence of Uni
 ### Visual Examples
 
 **Rich Mode** (Unicode):
+
 ```
 ┌─────────────────┐
 │ ^Centered Text^ │
@@ -103,6 +104,7 @@ The library automatically detects which mode to use based on the presence of Uni
 ```
 
 **ASCII Mode**:
+
 ```
 +-------------------+
 | ^Centered Text^   |
@@ -153,17 +155,20 @@ Renders an ASCII/Unicode diagram into an SVG element.
 Normalizes spacing/alignment to reduce jagged borders and width mismatch issues.
 
 **When to use:**
+
 - Before `render()` if your ASCII diagram has ragged borders or inconsistent column widths.
 - Essential when using centered text (`^`) within boxes to ensure symmetrical padding.
 - Optional for simple unboxed text, but recommended for professional output.
 
 **What it does:**
+
 - Detects structural boundaries (box walls, borders).
 - Balances centered content (`^Text^`) with padding on both sides.
 - Aligns structural-only lines without distorting them.
 - Preserves indentation and nesting.
 
 **Example:**
+
 ```ts
 const rough = `
 ┌────────────────┐

@@ -137,21 +137,28 @@ export class SmoothScrub {
       return /[│║└┘├┤┴┼╚╝╠╣╩╬╙╜╘╛╨╧╫]/.test(char);
     }
     if (char === '-' || char === '=' || char === '_') return false;
-    return /[|+v]/.test(char); 
+    return /[|+v]/.test(char);
   }
 
   /**
    * Finds the nearest vertically connectable cell in the next row.
    * A tight tolerance is preferred first, with a relaxed fallback for uneven input.
    */
-  private findVerticalNeighbor(curr: GridCell, nextRow: GridCell[], isRichMode: boolean): GridCell | null {
+  private findVerticalNeighbor(
+    curr: GridCell,
+    nextRow: GridCell[],
+    isRichMode: boolean
+  ): GridCell | null {
     if (!this.connectsDown(curr.char, isRichMode)) return null;
 
-    const connectedNextRow = nextRow.filter((candidate) => this.connectsUp(candidate.char, isRichMode));
+    const connectedNextRow = nextRow.filter((candidate) =>
+      this.connectsUp(candidate.char, isRichMode)
+    );
     const tightTolerance = this.cw * 0.5;
     const relaxedTolerance = this.cw * 2.0;
     const selectNearest = (candidates: GridCell[]) =>
-      [...candidates].sort((a, b) => Math.abs(a.cx - curr.cx) - Math.abs(b.cx - curr.cx))[0] || null;
+      [...candidates].sort((a, b) => Math.abs(a.cx - curr.cx) - Math.abs(b.cx - curr.cx))[0] ||
+      null;
 
     const tightCandidates = connectedNextRow.filter(
       (candidate) => Math.abs(candidate.cx - curr.cx) < tightTolerance
@@ -208,11 +215,11 @@ export class SmoothScrub {
     const hasVerticalNeighborAbove =
       rowIndex > 0 &&
       grid[rowIndex - 1].some(
-        (prevCell) => /[|+]/.test(prevCell.char) && this.findVerticalNeighbor(prevCell, row, false) === cell
+        (prevCell) =>
+          /[|+]/.test(prevCell.char) && this.findVerticalNeighbor(prevCell, row, false) === cell
       );
 
-    const surroundedByWordChars =
-      this.isAsciiWordChar(leftChar) && this.isAsciiWordChar(rightChar);
+    const surroundedByWordChars = this.isAsciiWordChar(leftChar) && this.isAsciiWordChar(rightChar);
 
     return hasHorizontalStructuralNeighbor || hasVerticalNeighborAbove || !surroundedByWordChars;
   }
@@ -249,8 +256,7 @@ export class SmoothScrub {
             }
 
             return this.findVerticalNeighbor(prevCell, row, isRichMode) === cell;
-          }) ||
-          false;
+          }) || false;
         if (hasIncoming) return;
 
         const cells: GridCell[] = [cell];
@@ -493,7 +499,8 @@ export class SmoothScrub {
             let fillChar = ' ';
             const coreContent = middle.replace(/[+v^<>|]/g, '');
             const isStructural = /^[-─═]+$/.test(coreContent);
-            const isEmptyStructural = middle.length === 0 && /[+┌┐└┘├┤┬┴┼]/.test(prefix) && /[+┌┐└┘├┤┬┴┼]/.test(suffix);
+            const isEmptyStructural =
+              middle.length === 0 && /[+┌┐└┘├┤┬┴┼]/.test(prefix) && /[+┌┐└┘├┤┬┴┼]/.test(suffix);
 
             if (isStructural || isEmptyStructural) {
               if (middle.includes('═') || prefix === '═') fillChar = '═';
@@ -641,13 +648,7 @@ export class SmoothScrub {
       if (!cell) return false;
 
       const char = cell.char;
-      if (
-        char !== '-' &&
-        char !== '|' &&
-        char !== '+' &&
-        char !== 'v'
-      )
-        return false;
+      if (char !== '-' && char !== '|' && char !== '+' && char !== 'v') return false;
 
       const leftChar = row[colIndex - 1]?.char;
       const rightChar = row[colIndex + 1]?.char;

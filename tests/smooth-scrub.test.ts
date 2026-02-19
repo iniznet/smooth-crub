@@ -168,14 +168,23 @@ describe('ASCII arrowhead and connector alignment', () => {
     const svg = scrubber.render('|' + '\n' + '|');
     const d = svg.querySelector('path')?.getAttribute('d') ?? '';
     const verticalSegments = parsePathSegments(d).filter(
-      (segment) => Math.abs(segment.x1 - segment.x2) <= 0.01 && Math.abs(segment.y1 - segment.y2) > 0.01
+      (segment) =>
+        Math.abs(segment.x1 - segment.x2) <= 0.01 && Math.abs(segment.y1 - segment.y2) > 0.01
     );
 
     expect(verticalSegments.length).toBeGreaterThan(0);
   });
 
   it('treats v in +--v--+ as structural connector in Plus ASCII fixture', () => {
-    const ascii = ['+---------+', '| Service |', '+----+----+', '     |', '  +--v--+', '  | API |', '  +-----+'].join('\n');
+    const ascii = [
+      '+---------+',
+      '| Service |',
+      '+----+----+',
+      '     |',
+      '  +--v--+',
+      '  | API |',
+      '  +-----+',
+    ].join('\n');
     const formatted = scrubber.autoFormat(ascii);
     const svg = scrubber.render(formatted);
     const d = svg.querySelector('path')?.getAttribute('d') ?? '';
@@ -272,7 +281,15 @@ describe('ASCII arrowhead and connector alignment', () => {
   });
 
   it('preserves right border alignment for indented API box content lines', () => {
-    const ascii = ['+---------+', '| Service |', '+----+----+', '     |', '  +--v--+', '  | API |', '  +-----+'].join('\n');
+    const ascii = [
+      '+---------+',
+      '| Service |',
+      '+----+----+',
+      '     |',
+      '  +--v--+',
+      '  | API |',
+      '  +-----+',
+    ].join('\n');
     const formatted = scrubber.autoFormat(ascii);
     const formattedLines = formatted.split('\n');
 

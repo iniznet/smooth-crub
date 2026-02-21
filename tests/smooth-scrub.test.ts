@@ -394,3 +394,137 @@ describe('Regression Tests (Bug Fixes)', () => {
     expect(lines[4]).toBe('        | ^Bottom  |');
   });
 });
+
+describe('Color marker rendering', () => {
+  const scrubber = new SmoothScrub();
+
+  it('treats color markers as zero-width and does not render marker text', () => {
+    const ascii = ['+----------------+', '| {#color:red}Hello there |', '+----------------+'].join(
+      '\n'
+    );
+    const svg = scrubber.render(scrubber.autoFormat(ascii));
+    const normalized = normalizeSvg(svg);
+    const helloText = Array.from(svg.querySelectorAll('text')).find((node) =>
+      (node.textContent ?? '').includes('Hello')
+    );
+
+    expect(normalized).not.toContain('{#color:red}');
+    expect(helloText).toBeTruthy();
+    expect(helloText?.getAttribute('fill')).toBe('red');
+  });
+
+  it('applies text color until next color marker on the same line', () => {
+    const ascii = [
+      '+-----------------------------+',
+      '| {#color:red}Red {#color:blue}Blue |',
+      '+-----------------------------+',
+    ].join('\n');
+    const svg = scrubber.render(scrubber.autoFormat(ascii));
+    const textNodes = Array.from(svg.querySelectorAll('text'));
+    const redNode = textNodes.find((node) => (node.textContent ?? '').startsWith('Red'));
+    const blueNode = textNodes.find((node) => (node.textContent ?? '').startsWith('Blue'));
+
+    expect(redNode).toBeTruthy();
+    expect(blueNode).toBeTruthy();
+    expect(redNode?.getAttribute('fill')).toBe('red');
+    expect(blueNode?.getAttribute('fill')).toBe('blue');
+  });
+
+  it('splits color markers inside centered (^...^) text spans', () => {
+    const ascii = [
+      '+---------------------------------+',
+      '| ^{#color:red}Red {#color:blue}Blue^ |',
+      '+---------------------------------+',
+    ].join('\n');
+    const svg = scrubber.render(ascii);
+    const textNodes = Array.from(svg.querySelectorAll('text'));
+    const redNode = textNodes.find(
+      (node) => node.getAttribute('fill') === 'red' && (node.textContent ?? '').includes('Red')
+    );
+    const blueNode = textNodes.find(
+      (node) => node.getAttribute('fill') === 'blue' && (node.textContent ?? '').includes('Blue')
+    );
+
+    expect(redNode).toBeTruthy();
+    expect(blueNode).toBeTruthy();
+    expect(redNode?.getAttribute('fill')).toBe('red');
+    expect(blueNode?.getAttribute('fill')).toBe('blue');
+    expect(Number(redNode?.getAttribute('x'))).toBeLessThan(Number(blueNode?.getAttribute('x')));
+  });
+
+  it('splits color markers inside right-aligned (>...) text spans', () => {
+    const ascii = [
+      '+---------------------------------+',
+      '| >{#color:red}Red {#color:blue}Blue |',
+      '+---------------------------------+',
+    ].join('\n');
+    const svg = scrubber.render(ascii);
+    const textNodes = Array.from(svg.querySelectorAll('text'));
+    const redNode = textNodes.find(
+      (node) => node.getAttribute('fill') === 'red' && (node.textContent ?? '').includes('Red')
+    );
+    const blueNode = textNodes.find(
+      (node) => node.getAttribute('fill') === 'blue' && (node.textContent ?? '').includes('Blue')
+    );
+
+    expect(redNode).toBeTruthy();
+    expect(blueNode).toBeTruthy();
+    expect(redNode?.getAttribute('fill')).toBe('red');
+    expect(blueNode?.getAttribute('fill')).toBe('blue');
+    expect(Number(redNode?.getAttribute('x'))).toBeLessThan(Number(blueNode?.getAttribute('x')));
+  });
+
+  it('applies bg and stroke markers to the smallest enclosing box', () => {
+    const ascii = [
+      '+------------------+',
+      '| +--------------+ |',
+      '| |{#bg:#f5f5f5}{#stroke:#e0e0e0} Hi | |',
+      '| +--------------+ |',
+      '+------------------+',
+    ].join('\n');
+    const svg = scrubber.render(scrubber.autoFormat(ascii));
+    const fillRect = Array.from(svg.querySelectorAll('rect')).find(
+      (node) => node.getAttribute('fill') === '#f5f5f5'
+    );
+    const strokeRect = Array.from(svg.querySelectorAll('rect')).find(
+      (node) => node.getAttribute('stroke') === '#e0e0e0'
+    );
+
+    expect(fillRect).toBeTruthy();
+    expect(strokeRect).toBeTruthy();
+  });
+
+  it('ignores invalid or unsafe markers as zero-width no-op', () => {
+    const ascii = [
+      '+---------------------------+',
+      '| {#foo:red}{#bg:url(js)}{#color:rgb(1,2,3)}Hello |',
+      '+---------------------------+',
+    ].join('\n');
+    const svg = scrubber.render(scrubber.autoFormat(ascii));
+    const normalized = normalizeSvg(svg);
+    const textNode = Array.from(svg.querySelectorAll('text')).find(
+      (node) => node.textContent === 'Hello'
+    );
+
+    expect(normalized).not.toContain('{#foo:red}');
+    expect(normalized).not.toContain('{#bg:url(js)}');
+    expect(normalized).not.toContain('{#color:rgb(1,2,3)}');
+    expect(svg.querySelectorAll('rect').length).toBe(0);
+    expect(textNode?.getAttribute('fill')).toBe('#444');
+  });
+
+  it('renders Chat Interface fixture with color attributes', () => {
+    const chat = fixtureSections.find((section) => section.name === 'Chat Interface');
+    expect(chat).toBeTruthy();
+
+    const formatted = scrubber.autoFormat(chat?.ascii ?? '');
+    const svg = scrubber.render(formatted);
+    const normalized = normalizeSvg(svg);
+
+    expect(normalized).toContain('#4caf50');
+    expect(normalized).toContain('#388e3c');
+    expect(normalized).toContain('#1976d2');
+    expect(normalized).toContain('#115293');
+    expect(normalized).toMatchSnapshot('Chat Interface (colored)');
+  });
+});

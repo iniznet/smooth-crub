@@ -30,6 +30,8 @@ interface GridCell {
   w: number;
   // Logical column width (1 for narrow chars, 2 for wide chars).
   cols: number;
+  // Whether this cell is part of a stroked box outline, used to prevent padding that breaks connectivity.
+  partOfStrokedBox?: boolean;
 }
 
 interface Zone {
@@ -50,6 +52,32 @@ interface VerticalRun {
   cells: GridCell[];
 }
 
+interface ParsedMarker {
+  key: 'bg' | 'stroke' | 'color';
+  value: string;
+  index: number;
+}
+
+interface ParsedLineMarkers {
+  rawLine: string;
+  cleanLine: string;
+  markers: ParsedMarker[];
+  hadMarkers: boolean;
+}
+
+interface DetectedBox {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  area: number;
+}
+
+interface BoxStyle {
+  bg?: string;
+  stroke?: string;
+}
+
 // Character rules are centralized here so mode detection and parsing stay consistent.
 const RICH_MODE_DETECTOR = /[─│┌┐└┘├┤┬┴┼║]/;
 const RICH_STRUCTURE_CHARS = /[─│┌┐└┘├┤┬┴┼║]/;
@@ -57,6 +85,158 @@ const ASCII_STRUCTURE_CHARS = /[─│┌┐└┘├┤┬┴┼║|_=/\\*+\-v<
 const RICH_VERTICAL_CHARS = /[│║]/;
 const ASCII_VERTICAL_CHARS = /[│║|]/;
 const CORNER_CHARS = /[┌┐└┘├┤┬┴┼]/;
+const COLOR_MARKER_REGEX = /\{\s*#([a-zA-Z]+)\s*:\s*([^}]+?)\s*\}/g;
+
+const CSS_NAMED_COLORS = new Set([
+  'aliceblue',
+  'antiquewhite',
+  'aqua',
+  'aquamarine',
+  'azure',
+  'beige',
+  'bisque',
+  'black',
+  'blanchedalmond',
+  'blue',
+  'blueviolet',
+  'brown',
+  'burlywood',
+  'cadetblue',
+  'chartreuse',
+  'chocolate',
+  'coral',
+  'cornflowerblue',
+  'cornsilk',
+  'crimson',
+  'cyan',
+  'darkblue',
+  'darkcyan',
+  'darkgoldenrod',
+  'darkgray',
+  'darkgreen',
+  'darkgrey',
+  'darkkhaki',
+  'darkmagenta',
+  'darkolivegreen',
+  'darkorange',
+  'darkorchid',
+  'darkred',
+  'darksalmon',
+  'darkseagreen',
+  'darkslateblue',
+  'darkslategray',
+  'darkslategrey',
+  'darkturquoise',
+  'darkviolet',
+  'deeppink',
+  'deepskyblue',
+  'dimgray',
+  'dimgrey',
+  'dodgerblue',
+  'firebrick',
+  'floralwhite',
+  'forestgreen',
+  'fuchsia',
+  'gainsboro',
+  'ghostwhite',
+  'gold',
+  'goldenrod',
+  'gray',
+  'green',
+  'greenyellow',
+  'grey',
+  'honeydew',
+  'hotpink',
+  'indianred',
+  'indigo',
+  'ivory',
+  'khaki',
+  'lavender',
+  'lavenderblush',
+  'lawngreen',
+  'lemonchiffon',
+  'lightblue',
+  'lightcoral',
+  'lightcyan',
+  'lightgoldenrodyellow',
+  'lightgray',
+  'lightgreen',
+  'lightgrey',
+  'lightpink',
+  'lightsalmon',
+  'lightseagreen',
+  'lightskyblue',
+  'lightslategray',
+  'lightslategrey',
+  'lightsteelblue',
+  'lightyellow',
+  'lime',
+  'limegreen',
+  'linen',
+  'magenta',
+  'maroon',
+  'mediumaquamarine',
+  'mediumblue',
+  'mediumorchid',
+  'mediumpurple',
+  'mediumseagreen',
+  'mediumslateblue',
+  'mediumspringgreen',
+  'mediumturquoise',
+  'mediumvioletred',
+  'midnightblue',
+  'mintcream',
+  'mistyrose',
+  'moccasin',
+  'navajowhite',
+  'navy',
+  'oldlace',
+  'olive',
+  'olivedrab',
+  'orange',
+  'orangered',
+  'orchid',
+  'palegoldenrod',
+  'palegreen',
+  'paleturquoise',
+  'palevioletred',
+  'papayawhip',
+  'peachpuff',
+  'peru',
+  'pink',
+  'plum',
+  'powderblue',
+  'purple',
+  'rebeccapurple',
+  'red',
+  'rosybrown',
+  'royalblue',
+  'saddlebrown',
+  'salmon',
+  'sandybrown',
+  'seagreen',
+  'seashell',
+  'sienna',
+  'silver',
+  'skyblue',
+  'slateblue',
+  'slategray',
+  'slategrey',
+  'snow',
+  'springgreen',
+  'steelblue',
+  'tan',
+  'teal',
+  'thistle',
+  'tomato',
+  'turquoise',
+  'violet',
+  'wheat',
+  'white',
+  'whitesmoke',
+  'yellow',
+  'yellowgreen',
+]);
 
 export class SmoothScrub {
   private cw: number;
@@ -269,7 +449,13 @@ export class SmoothScrub {
             grid[currentRowIndex + 1],
             isRichMode
           );
+          // Stop the run if we hit a cell that is part of a stroked box outline, to avoid padding that breaks connectivity.
           if (!nextCell) break;
+
+          // If the next cell is part of a stroked box outline, we should not include it in the vertical run,
+          // as padding it would break the box connectivity. Instead, we should end the current vertical run
+          // before this cell.
+          if (currentCell.partOfStrokedBox && nextCell.partOfStrokedBox) break;
 
           cells.push(nextCell);
           currentCell = nextCell;
@@ -303,6 +489,7 @@ export class SmoothScrub {
   private getRichModeWidth(grapheme: string): number {
     const isWideRichMode =
       /[\u{1F300}-\u{1F9FF}]/u.test(grapheme) ||
+      /[\u{1FA00}-\u{1FAFF}]/u.test(grapheme) ||
       /[\u{2600}-\u{27BF}]/u.test(grapheme) ||
       /[\u{4E00}-\u{9FFF}]/u.test(grapheme) ||
       /\uFE0F/.test(grapheme);
@@ -338,6 +525,184 @@ export class SmoothScrub {
     return Array.from(text);
   }
 
+  private isSafeColorValue(value: string): boolean {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (/url\s*\(/i.test(trimmed)) return false;
+    if (/[();{}]/.test(trimmed)) return false;
+    if (/^#[0-9a-f]{3}$/i.test(trimmed)) return true;
+    if (/^#[0-9a-f]{6}$/i.test(trimmed)) return true;
+    if (/^[a-z]+$/i.test(trimmed)) {
+      return CSS_NAMED_COLORS.has(trimmed.toLowerCase());
+    }
+    return false;
+  }
+
+  private parseLineMarkers(line: string): ParsedLineMarkers {
+    const markers: ParsedMarker[] = [];
+    let cleanLine = '';
+    let cleanIndex = 0;
+    let cursor = 0;
+    let hadMarkers = false;
+
+    for (const match of line.matchAll(COLOR_MARKER_REGEX)) {
+      const markerText = match[0] ?? '';
+      const rawKey = match[1]?.toLowerCase() ?? '';
+      const rawValue = match[2]?.trim() ?? '';
+      const matchIndex = match.index ?? 0;
+
+      const prefix = line.slice(cursor, matchIndex);
+      cleanLine += prefix;
+      cleanIndex += this.splitGraphemes(prefix).length;
+      cursor = matchIndex + markerText.length;
+      hadMarkers = true;
+
+      if (rawKey !== 'bg' && rawKey !== 'stroke' && rawKey !== 'color') {
+        continue;
+      }
+      if (!this.isSafeColorValue(rawValue)) {
+        continue;
+      }
+
+      markers.push({
+        key: rawKey,
+        value: rawValue,
+        index: cleanIndex,
+      });
+    }
+
+    const suffix = line.slice(cursor);
+    cleanLine += suffix;
+
+    return { rawLine: line, cleanLine, markers, hadMarkers };
+  }
+
+  private isTopLeftCorner(char: string): boolean {
+    return char === '+' || char === '┌';
+  }
+
+  private isTopRightCorner(char: string): boolean {
+    return char === '+' || char === '┐';
+  }
+
+  private isBottomLeftCorner(char: string): boolean {
+    return char === '+' || char === '└';
+  }
+
+  private isBottomRightCorner(char: string): boolean {
+    return char === '+' || char === '┘';
+  }
+
+  private isHorizontalBoxEdge(char: string): boolean {
+    return char === '-' || char === '─';
+  }
+
+  private isVerticalBoxEdge(char: string): boolean {
+    return char === '|' || char === '│' || char === '+' || char === '├' || char === '┤';
+  }
+
+  private detectRectangularBoxes(lines: string[]): DetectedBox[] {
+    const graphemeRows = lines.map((line) => this.splitGraphemes(line));
+    const boxes: DetectedBox[] = [];
+
+    for (let top = 0; top < graphemeRows.length; top += 1) {
+      const topRow = graphemeRows[top];
+      for (let left = 0; left < topRow.length; left += 1) {
+        if (!this.isTopLeftCorner(topRow[left])) continue;
+
+        for (let right = left + 2; right < topRow.length; right += 1) {
+          if (!this.isTopRightCorner(topRow[right])) continue;
+
+          let validTop = true;
+          for (let x = left + 1; x < right; x += 1) {
+            if (!this.isHorizontalBoxEdge(topRow[x] ?? '')) {
+              validTop = false;
+              break;
+            }
+          }
+          if (!validTop) continue;
+
+          for (let bottom = top + 2; bottom < graphemeRows.length; bottom += 1) {
+            const bottomRow = graphemeRows[bottom];
+            if (!this.isBottomLeftCorner(bottomRow[left] ?? '')) continue;
+            if (!this.isBottomRightCorner(bottomRow[right] ?? '')) continue;
+
+            let validBottom = true;
+            for (let x = left + 1; x < right; x += 1) {
+              if (!this.isHorizontalBoxEdge(bottomRow[x] ?? '')) {
+                validBottom = false;
+                break;
+              }
+            }
+            if (!validBottom) continue;
+
+            let validSides = true;
+            for (let y = top + 1; y < bottom; y += 1) {
+              const midRow = graphemeRows[y];
+              if (!this.isVerticalBoxEdge(midRow[left] ?? '')) {
+                validSides = false;
+                break;
+              }
+              if (!this.isVerticalBoxEdge(midRow[right] ?? '')) {
+                validSides = false;
+                break;
+              }
+            }
+            if (!validSides) continue;
+
+            boxes.push({
+              top,
+              right,
+              bottom,
+              left,
+              area: (right - left) * (bottom - top),
+            });
+          }
+        }
+      }
+    }
+
+    return boxes;
+  }
+
+  private findSmallestEnclosingBox(
+    boxes: DetectedBox[],
+    row: number,
+    col: number
+  ): DetectedBox | null {
+    const enclosing = boxes
+      .filter((box) => row > box.top && row < box.bottom && col > box.left && col < box.right)
+      .sort((a, b) => a.area - b.area);
+    return enclosing[0] ?? null;
+  }
+
+  private resolveTextColor(markers: ParsedMarker[], colIndex: number): string | null {
+    let color: string | null = null;
+    for (const marker of markers) {
+      if (marker.key !== 'color') continue;
+      if (marker.index > colIndex) break;
+      color = marker.value;
+    }
+    return color;
+  }
+
+  private injectMarkersIntoLine(cleanLine: string, markers: ParsedMarker[]): string {
+    if (!markers.length) return cleanLine;
+
+    const graphemes = this.splitGraphemes(cleanLine);
+    const sortedMarkers = [...markers].sort((a, b) => a.index - b.index);
+    let offset = 0;
+
+    sortedMarkers.forEach((marker) => {
+      const markerText = `{#${marker.key}:${marker.value}}`;
+      const insertAt = Math.max(0, Math.min(graphemes.length, marker.index + offset));
+      graphemes.splice(insertAt, 0, markerText);
+      offset += 1;
+    });
+
+    return graphemes.join('');
+  }
+
   /**
    * Decides whether a vertical run should start from the cell center.
    */
@@ -367,40 +732,58 @@ export class SmoothScrub {
    * 3) Align structural boundaries and centered text markers.
    */
   public autoFormat(ascii: string): string {
-    const isRichMode = this.detectRichMode(ascii);
-    const lines = ascii.split('\n');
+    ascii = ascii.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    const parsedLines = ascii.split('\n').map((line) => this.parseLineMarkers(line.replace(/\r$/, '')));
+    const isRichMode = this.detectRichMode(parsedLines.map((line) => line.cleanLine).join('\n'));
     const blocks: string[][] = [];
+    const blockMeta: ParsedLineMarkers[][] = [];
     let currentBlock: string[] = [];
+    let currentMetaBlock: ParsedLineMarkers[] = [];
 
-    lines.forEach((line) => {
+    parsedLines.forEach((parsedLine) => {
+      const line = parsedLine.cleanLine;
       if (line.trim() === '') {
-        if (currentBlock.length) blocks.push(currentBlock);
+        if (currentBlock.length) {
+          blocks.push(currentBlock);
+          blockMeta.push(currentMetaBlock);
+        }
         blocks.push(['']);
+        blockMeta.push([{ rawLine: '', cleanLine: '', markers: [], hadMarkers: false }]);
         currentBlock = [];
+        currentMetaBlock = [];
       } else {
         currentBlock.push(line);
+        currentMetaBlock.push(parsedLine);
       }
     });
-    if (currentBlock.length) blocks.push(currentBlock);
+    if (currentBlock.length) {
+      blocks.push(currentBlock);
+      blockMeta.push(currentMetaBlock);
+    }
 
-    const formattedBlocks = blocks.map((block) => {
+    const formattedBlocks = blocks.map((block, blockIndex) => {
       // Empty blocks preserve intentional spacing between independent diagrams.
       if (block.length === 1 && block[0] === '') return '';
 
       let maxVisWidth = 0;
-      const lineStats = block.map((line) => {
+      const lineStats = block.map((line, lineIndex) => {
         const visW = this.getTextDisplayWidth(line, isRichMode);
 
         if (visW > maxVisWidth) maxVisWidth = visW;
-        return { line, visW };
+        return { line, visW, lineMeta: blockMeta[blockIndex][lineIndex] };
       });
 
       return lineStats
         .map((stat) => {
+          let nextLine = stat.line;
+
           // Keep short connector stubs untouched to avoid accidental drift.
           const isConnectorStub = /^\s+[|+]\s*$/.test(stat.line);
           if (isConnectorStub) {
-            return stat.line;
+            nextLine = stat.line;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
           const isStructuralOnlyLine =
@@ -409,7 +792,10 @@ export class SmoothScrub {
               (grapheme) => grapheme === ' ' || this.isStructure(grapheme, isRichMode)
             );
           if (isStructuralOnlyLine) {
-            return stat.line;
+            nextLine = stat.line;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
           const diff = maxVisWidth - stat.visW;
@@ -425,7 +811,10 @@ export class SmoothScrub {
 
           // Skip plain text lines that are not within structural boundaries and not centered.
           if (!hasStructuralBoundary && !lineWithoutIndentation.includes('^')) {
-            return stat.line;
+            nextLine = stat.line;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
           let prefix = '';
@@ -446,14 +835,16 @@ export class SmoothScrub {
           }
 
           const hasIndentedStructuralWalls =
-            indentation.length > 0 &&
             prefix.length > 0 &&
             suffix.length > 0 &&
             this.isStructure(prefix, isRichMode) &&
             this.isStructure(suffix, isRichMode);
           // Nested boxes often rely on manual indentation; avoid forcing these lines.
-          if (hasIndentedStructuralWalls && diff > 0) {
-            return stat.line;
+          if (hasIndentedStructuralWalls && diff > 0 && (isRichMode || indentation.length > 0)) {
+            nextLine = stat.line;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
           const trimmedMiddle = middle.trim();
@@ -473,7 +864,10 @@ export class SmoothScrub {
           }
 
           if (diff <= 0 && centeredContent === null) {
-            return stat.line;
+            nextLine = stat.line;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
           if (centeredContent !== null) {
@@ -484,14 +878,16 @@ export class SmoothScrub {
             const totalPadding = Math.max(0, availableWidth - contentWidth);
             const leftPad = Math.floor(totalPadding / 2);
             const rightPad = totalPadding - leftPad;
-            return (
+            nextLine =
               indentation +
               prefix +
               ' '.repeat(leftPad) +
               centeredContent +
               ' '.repeat(rightPad) +
-              suffix
-            );
+              suffix;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
           if (suffix) {
@@ -507,10 +903,16 @@ export class SmoothScrub {
               else if (middle.includes('─') || prefix === '─') fillChar = '─';
               else fillChar = '-';
             }
-            return indentation + prefix + middle + fillChar.repeat(diff) + suffix;
+            nextLine = indentation + prefix + middle + fillChar.repeat(diff) + suffix;
+            return stat.lineMeta.hadMarkers
+              ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+              : nextLine;
           }
 
-          return stat.line;
+          nextLine = stat.line;
+          return stat.lineMeta.hadMarkers
+            ? this.injectMarkersIntoLine(nextLine, stat.lineMeta.markers)
+            : nextLine;
         })
         .join('\n');
     });
@@ -531,9 +933,34 @@ export class SmoothScrub {
       throw new Error('SmoothScrub.render() requires a DOM environment (window.document).');
     }
 
-    const isRichMode = this.detectRichMode(ascii);
-    const lines = ascii.split('\n');
+    ascii = ascii.replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+    const parsedLines = ascii.split('\n').map((line) => this.parseLineMarkers(line.replace(/\r$/, '')));
+    const lines = parsedLines.map((line) => line.cleanLine);
+    const isRichMode = this.detectRichMode(lines.join('\n'));
     const grid: GridCell[][] = [];
+    const boxes = this.detectRectangularBoxes(lines);
+    const boxStyles = new Map<string, BoxStyle>();
+
+    parsedLines.forEach((line, row) => {
+      line.markers.forEach((marker) => {
+        if (marker.key !== 'bg' && marker.key !== 'stroke') return;
+
+        const box = this.findSmallestEnclosingBox(boxes, row, marker.index);
+        if (!box) return;
+
+        const id = `${box.top}:${box.left}:${box.bottom}:${box.right}`;
+        const style = boxStyles.get(id) ?? {};
+        if (marker.key === 'bg') {
+          style.bg = marker.value;
+        }
+        if (marker.key === 'stroke') {
+          style.stroke = marker.value;
+        }
+        boxStyles.set(id, style);
+      });
+    });
+
     let maxPixelW = 0;
     const maxRow = lines.length;
 
@@ -564,6 +991,23 @@ export class SmoothScrub {
       if (currentX > maxPixelW) maxPixelW = currentX;
     });
 
+    // Tag cells on styled box perimeters so default structure paths do not overdraw custom strokes.
+    boxStyles.forEach((style, id) => {
+      if (!style.stroke) return;
+
+      const [top, left, bottom, right] = id.split(':').map(Number);
+
+      for (let c = left; c <= right; c += 1) {
+        if (grid[top]?.[c]) grid[top][c].partOfStrokedBox = true;
+        if (grid[bottom]?.[c]) grid[bottom][c].partOfStrokedBox = true;
+      }
+
+      for (let r = top; r <= bottom; r += 1) {
+        if (grid[r]?.[left]) grid[r][left].partOfStrokedBox = true;
+        if (grid[r]?.[right]) grid[r][right].partOfStrokedBox = true;
+      }
+    });
+
     const width = maxPixelW + this.cw;
     const height = maxRow * this.ch + this.ch * 2;
     const ns = 'http://www.w3.org/2000/svg';
@@ -580,14 +1024,56 @@ export class SmoothScrub {
     pathGroup.setAttribute('stroke-linejoin', 'round');
 
     const textGroup = document.createElementNS(ns, 'g');
+    const boxFillGroup = document.createElementNS(ns, 'g');
+    const boxStrokeGroup = document.createElementNS(ns, 'g');
     let d = '';
+
+    boxStyles.forEach((style, id) => {
+      const [top, left, bottom, right] = id.split(':').map(Number);
+
+      if (style.bg) {
+        const innerX = (left + 1.5) * this.cw;
+        const innerY = (top + 1.5) * this.ch;
+        const innerWidth = Math.max(0, (right - left) * this.cw);
+        const innerHeight = Math.max(0, (bottom - top) * this.ch);
+
+        if (innerWidth > 0 && innerHeight > 0) {
+          const rect = document.createElementNS(ns, 'rect');
+          rect.setAttribute('x', innerX.toString());
+          rect.setAttribute('y', innerY.toString());
+          rect.setAttribute('width', innerWidth.toString());
+          rect.setAttribute('height', innerHeight.toString());
+          rect.setAttribute('fill', style.bg);
+          boxFillGroup.appendChild(rect);
+        }
+      }
+
+      if (style.stroke) {
+        const strokeRect = document.createElementNS(ns, 'rect');
+        strokeRect.setAttribute('x', ((left + 1.5) * this.cw).toString());
+        strokeRect.setAttribute('y', ((top + 1.5) * this.ch).toString());
+        strokeRect.setAttribute('width', ((right - left) * this.cw).toString());
+        strokeRect.setAttribute('height', ((bottom - top) * this.ch).toString());
+        strokeRect.setAttribute('fill', 'none');
+        strokeRect.setAttribute('stroke', style.stroke);
+        strokeRect.setAttribute('stroke-width', this.strokeWidth.toString());
+        strokeRect.setAttribute('stroke-linejoin', 'round');
+        strokeRect.setAttribute('stroke-linecap', 'butt');
+        boxStrokeGroup.appendChild(strokeRect);
+      }
+    });
 
     // Pass 1: draw horizontal structural segments.
     grid.forEach((row) => {
-      const canConnectHorizontally = (left: GridCell, right: GridCell) =>
-        this.isStructure(left.char, isRichMode) &&
-        this.isStructure(right.char, isRichMode) &&
-        Math.abs(right.x - (left.x + left.w)) < 2;
+      const canConnectHorizontally = (left: GridCell, right: GridCell) => {
+        if (left.partOfStrokedBox && right.partOfStrokedBox) return false;
+
+        return (
+          this.isStructure(left.char, isRichMode) &&
+          this.isStructure(right.char, isRichMode) &&
+          Math.abs(right.x - (left.x + left.w)) < 2
+        );
+      };
 
       let i = 0;
       while (i < row.length - 1) {
@@ -721,13 +1207,19 @@ export class SmoothScrub {
         const cellMap: GridCell[] = [];
 
         for (let k = zone.start; k < zone.end; k++) {
-          if (row[k]) {
-            if (isAsciiZoneConnector(rowIndex, k)) {
-              continue;
-            }
-            rawString += row[k].char;
-            cellMap.push(row[k]);
+          const cell = row[k];
+          if (!cell) continue;
+
+          if (isAsciiZoneConnector(rowIndex, k)) {
+            continue;
           }
+
+          if (cell.partOfStrokedBox && this.isStructure(cell.char, isRichMode)) {
+            continue;
+          }
+
+          rawString += cell.char;
+          cellMap.push(cell);
         }
         if (!rawString.trim()) return;
 
@@ -736,14 +1228,15 @@ export class SmoothScrub {
           align: 'start' | 'middle' | 'end',
           finalX: number,
           cell: GridCell | undefined,
-          preserve: boolean
+          preserve: boolean,
+          textColor: string | null
         ) => {
           // `preserve` keeps intentional internal spacing for centered/balanced text.
           const t = document.createElementNS(ns, 'text');
           t.setAttribute('x', finalX.toString());
           t.setAttribute('y', cell ? (cell.y + this.ch * 0.7).toString() : '0');
           t.setAttribute('text-anchor', align);
-          t.setAttribute('fill', '#444');
+          t.setAttribute('fill', textColor ?? '#444');
           t.setAttribute('font-family', 'monospace');
           t.setAttribute('font-weight', 'bold');
 
@@ -755,7 +1248,67 @@ export class SmoothScrub {
           }
 
           t.textContent = text;
+
           textGroup.appendChild(t);
+        };
+
+        const createSplitAwareTextNode = (
+          text: string,
+          align: 'start' | 'middle' | 'end',
+          finalX: number,
+          cell: GridCell | undefined,
+          preserve: boolean,
+          tokenStartCol: number
+        ) => {
+          const tokenGraphemes = this.splitGraphemes(text);
+          const tokenEndCol = tokenStartCol + tokenGraphemes.length;
+          const rowMarkers = parsedLines[rowIndex].markers;
+          const tokenColorBreaks = rowMarkers
+            .filter(
+              (marker) =>
+                marker.key === 'color' && marker.index > tokenStartCol && marker.index < tokenEndCol
+            )
+            .map((marker) => marker.index)
+            .sort((a, b) => a - b);
+
+          if (tokenColorBreaks.length === 0) {
+            const color = this.resolveTextColor(rowMarkers, tokenStartCol);
+            createTextNode(text, align, finalX, cell, preserve, color);
+            return;
+          }
+
+          const splitPoints = [tokenStartCol, ...tokenColorBreaks, tokenEndCol];
+          const tokenDisplayWidth = this.getTextDisplayWidth(text, isRichMode);
+          const tokenWidthPx = tokenDisplayWidth * this.cw;
+          let tokenLeftX = finalX;
+
+          if (align === 'middle') {
+            tokenLeftX = finalX - tokenWidthPx / 2;
+          } else if (align === 'end') {
+            tokenLeftX = finalX - tokenWidthPx;
+          }
+
+          let consumedCols = 0;
+          for (let splitIndex = 0; splitIndex < splitPoints.length - 1; splitIndex += 1) {
+            const segmentStartCol = splitPoints[splitIndex];
+            const segmentEndCol = splitPoints[splitIndex + 1];
+            const localStart = segmentStartCol - tokenStartCol;
+            const localEnd = segmentEndCol - tokenStartCol;
+            const segmentText = tokenGraphemes.slice(localStart, localEnd).join('');
+            if (!segmentText) continue;
+
+            const segmentColor = this.resolveTextColor(rowMarkers, segmentStartCol);
+            const segmentX = tokenLeftX + consumedCols * this.cw;
+            createTextNode(
+              segmentText,
+              'start',
+              segmentX,
+              cell,
+              preserve || /\s{2,}/.test(segmentText),
+              segmentColor
+            );
+            consumedCols += this.getTextDisplayWidth(segmentText, isRichMode);
+          }
         };
 
         const trimmed = rawString.trim();
@@ -765,7 +1318,8 @@ export class SmoothScrub {
           const baseCell = cellMap[leadingSpaceCount] ?? cellMap[0];
           const text = trimmed.slice(1, -1);
           const zoneCenter = (zone.leftX + zone.rightX) / 2;
-          createTextNode(text, 'middle', zoneCenter, baseCell, true);
+          const baseCol = zone.start + leadingSpaceCount + 1;
+          createSplitAwareTextNode(text, 'middle', zoneCenter, baseCell, true, baseCol);
           return;
         }
 
@@ -774,7 +1328,8 @@ export class SmoothScrub {
           const baseCell = cellMap[leadingSpaceCount] ?? cellMap[0];
           const text = trimmed.slice(1);
           const zoneCenter = (zone.leftX + zone.rightX) / 2;
-          createTextNode(text, 'middle', zoneCenter, baseCell, true);
+          const baseCol = zone.start + leadingSpaceCount + 1;
+          createSplitAwareTextNode(text, 'middle', zoneCenter, baseCell, true, baseCol);
           return;
         }
 
@@ -782,21 +1337,26 @@ export class SmoothScrub {
         for (const match of matches) {
           let text = match[0];
           const cell = cellMap[match.index ?? 0];
+          let leadingAlignOffset = 0;
 
           let align: 'start' | 'middle' | 'end' = 'start';
           // Marker parsing supports leading and trailing alignment hints.
           if (text.startsWith('^') && text.endsWith('^') && text.length > 2) {
             align = 'middle';
             text = text.slice(1, -1);
+            leadingAlignOffset = 1;
           } else if (text.startsWith('^') && text.length > 1 && text !== '^^') {
             align = 'middle';
             text = text.substring(1);
+            leadingAlignOffset = 1;
           } else if (text.startsWith('>')) {
             align = 'end';
             text = text.substring(1);
+            leadingAlignOffset = 1;
           } else if (text.startsWith('<')) {
             align = 'start';
             text = text.substring(1);
+            leadingAlignOffset = 1;
           }
           if (text.endsWith('>')) {
             align = 'end';
@@ -817,14 +1377,21 @@ export class SmoothScrub {
             if (match[0].startsWith('<')) finalX = zone.leftX + pad;
           }
 
-          createTextNode(text, align, finalX, cell, /\s{2,}/.test(text));
+          const tokenStartCol = zone.start + (match.index ?? 0) + leadingAlignOffset;
+          createSplitAwareTextNode(text, align, finalX, cell, /\s{2,}/.test(text), tokenStartCol);
         }
       });
     });
 
     pathGroup.setAttribute('d', d);
-    svg.appendChild(textGroup);
+    if (boxFillGroup.childNodes.length > 0) {
+      svg.appendChild(boxFillGroup);
+    }
     svg.appendChild(pathGroup);
+    if (boxStrokeGroup.childNodes.length > 0) {
+      svg.appendChild(boxStrokeGroup);
+    }
+    svg.appendChild(textGroup);
     return svg;
   }
 }
